@@ -27,6 +27,7 @@ class TransformerModelArgs(BaseModelArgs):
     vocab_size: int = -1  # defined later by tokenizer
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
     ffn_dim_multiplier: Optional[float] = None
+    ffn_hidden_size: int = None
     norm_eps: float = 1e-5
     rope_theta: float = 10000
 
@@ -239,13 +240,18 @@ class FeedForward(nn.Module):
         hidden_dim: int,
         multiple_of: int,
         ffn_dim_multiplier: Optional[float],
+        ffn_hidden_size: int,
     ):
         super().__init__()
-        hidden_dim = int(2 * hidden_dim / 3)
-        # custom dim factor multiplier
-        if ffn_dim_multiplier is not None:
-            hidden_dim = int(ffn_dim_multiplier * hidden_dim)
-        hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
+        
+        if ffn_hidden_size:
+            hidden_dim = ffn_hidden_size
+        else:
+            hidden_dim = int(2 * hidden_dim / 3)
+            # custom dim factor multiplier
+            if ffn_dim_multiplier is not None:
+                hidden_dim = int(ffn_dim_multiplier * hidden_dim)
+            hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
 
         self.w1 = nn.Linear(dim, hidden_dim, bias=False)
         self.w2 = nn.Linear(hidden_dim, dim, bias=False)
@@ -287,6 +293,7 @@ class TransformerBlock(nn.Module):
         self.attention = Attention(model_args)
         self.feed_forward = FeedForward(
             dim=model_args.dim,
+            ffn_hidden_size=model_args.ffn_hidden_size,
             hidden_dim=4 * model_args.dim,
             multiple_of=model_args.multiple_of,
             ffn_dim_multiplier=model_args.ffn_dim_multiplier,

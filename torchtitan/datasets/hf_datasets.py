@@ -24,8 +24,12 @@ def _load_c4_dataset(dataset_path: str):
     """Load C4 dataset with default configuration."""
     return load_dataset(dataset_path, name="en", split="train", streaming=True)
 
+def _load_fineweb_edu_dataset(dataset_path: str):
+    """Load C4 dataset with default configuration."""
+    return load_dataset(dataset_path, split="train", streaming=True)
 
-def _process_c4_text(sample: Dict[str, Any]) -> str:
+
+def _process_c4_like_text(sample: Dict[str, Any]) -> str:
     """Process C4 dataset sample text."""
     return sample["text"]
 
@@ -42,12 +46,17 @@ DATASETS = {
     "c4": DatasetConfig(
         path="allenai/c4",
         loader=_load_c4_dataset,
-        text_processor=_process_c4_text,
+        text_processor=_process_c4_like_text,
     ),
     "c4_test": DatasetConfig(
         path="tests/assets/c4_test",
         loader=lambda path: load_dataset(path, split="train"),
-        text_processor=_process_c4_text,
+        text_processor=_process_c4_like_text,
+    ),
+    "fineweb_edu": DatasetConfig(
+        path="HuggingFaceFW/fineweb-edu",
+        loader=_load_fineweb_edu_dataset,
+        text_processor=_process_c4_like_text,
     ),
 }
 

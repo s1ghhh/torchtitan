@@ -250,7 +250,7 @@ def main(job_config: JobConfig):
     logger.info(
         f"Training starts at step {train_state.step + 1}, "
         f"with local batch size {job_config.training.batch_size}, "
-        f"global batch size {job_config.training.batch_size * dp_degree}, "
+        f"global batch size {job_config.training.batch_size * dp_degree * job_config.training.gradient_accumulation_steps}, "
         f"sequence length {job_config.training.seq_len}, "
         f"total steps {job_config.training.steps} "
         f"(warmup {job_config.training.warmup_steps})"
@@ -264,56 +264,61 @@ def main(job_config: JobConfig):
             train_state.step += 1
             gc_handler.run(train_state.step)
 
-            # get batch
-            data_load_start = time.perf_counter()
-            batch = next(data_iterator)
-            input_ids, labels = batch
-            ntokens_since_last_log += labels.numel()
-            data_loading_times.append(time.perf_counter() - data_load_start)
-
-            input_ids = input_ids.to(device_type)
-            labels = labels.to(device_type)
             optimizers.zero_grad()
+            for micro_step in range(job_config.training.gradient_accumulation_steps):
+                # get batch
+                data_load_start = time.perf_counter()
+                batch = next(data_iterator)
+                input_ids, labels = batch
+                ntokens_since_last_log += labels.numel()
+                data_loading_times.append(time.perf_counter() - data_load_start)
 
-            # apply context parallelism if cp is enabled
-            # ensure CP handles the separate freqs_cis buffer for each pp stage
-            optional_context_parallel_ctx = (
-                utils.create_context_parallel_ctx(
-                    cp_mesh=world_mesh["cp"],
-                    cp_buffers=[input_ids, labels] + [m.freqs_cis for m in model_parts],
-                    cp_seq_dims=[1, 1] + [0 for _ in model_parts],
-                    cp_no_restore_buffers={input_ids, labels},
-                    cp_rotate_method=job_config.experimental.context_parallel_rotate_method,
+                input_ids = input_ids.to(device_type)
+                labels = labels.to(device_type)
+
+                # apply context parallelism if cp is enabled
+                # ensure CP handles the separate freqs_cis buffer for each pp stage
+                optional_context_parallel_ctx = (
+                    utils.create_context_parallel_ctx(
+                        cp_mesh=world_mesh["cp"],
+                        cp_buffers=[input_ids, labels] + [m.freqs_cis for m in model_parts],
+                        cp_seq_dims=[1, 1] + [0 for _ in model_parts],
+                        cp_no_restore_buffers={input_ids, labels},
+                        cp_rotate_method=job_config.experimental.context_parallel_rotate_method,
+                    )
+                    if parallel_dims.cp_enabled
+                    else None
                 )
-                if parallel_dims.cp_enabled
-                else None
-            )
 
-            if parallel_dims.pp_enabled:
-                # Pipeline Parallel forward / backward inside step() call
-                with train_context(optional_context_parallel_ctx):
-                    targets, losses = (labels, []) if has_last_stage else (None, None)
-                    if has_first_stage:
-                        pp_schedule.step(input_ids, target=targets, losses=losses)
-                    else:
-                        pp_schedule.step(target=targets, losses=losses)
+                if parallel_dims.pp_enabled:
+                    # Pipeline Parallel forward / backward inside step() call
+                    with train_context(optional_context_parallel_ctx):
+                        targets, losses = (labels, []) if has_last_stage else (None, None)
+                        if has_first_stage:
+                            pp_schedule.step(input_ids, target=targets, losses=losses)
+                        else:
+                            pp_schedule.step(target=targets, losses=losses)
 
-                # accumulate losses across pipeline microbatches
-                # TODO: PP+FSDP unexpectedly puts the loss back to the CPU
-                loss = (
-                    torch.mean(torch.stack(losses)).to(device)
-                    if has_last_stage
-                    else torch.tensor([-1.0], device=device)
-                )
-            else:
-                # Non-PP forward / backward
-                with train_context(optional_context_parallel_ctx):
-                    pred = model(input_ids)
-                    loss = loss_fn(pred, labels)
-                    # pred.shape=(bs, seq_len, vocab_size)
-                    # need to free to before bwd to avoid peaking memory
-                    del pred
-                    loss.backward()
+                    # accumulate losses across pipeline microbatches
+                    # TODO: PP+FSDP unexpectedly puts the loss back to the CPU
+                    loss = (
+                        torch.mean(torch.stack(losses)).to(device)
+                        if has_last_stage
+                        else torch.tensor([-1.0], device=device)
+                    )
+                    
+                    # GS: may raise value
+                    loss = loss / job_config.training.gradient_accumulation_steps
+                else:
+                    # Non-PP forward / backward
+                    with train_context(optional_context_parallel_ctx):
+                        pred = model(input_ids)
+                        loss = loss_fn(pred, labels)
+                        # pred.shape=(bs, seq_len, vocab_size)
+                        # need to free to before bwd to avoid peaking memory
+                        del pred
+                        loss = loss / job_config.training.gradient_accumulation_steps
+                        loss.backward()
 
             # clip gradients
             utils.clip_grad_norm_(
@@ -373,8 +378,8 @@ def main(job_config: JobConfig):
                 device_mem_stats = device_memory_monitor.get_peak_stats()
 
                 metrics = {
-                    "loss_metrics/global_avg_loss": global_avg_loss,
-                    "loss_metrics/global_max_loss": global_max_loss,
+                    "loss_metrics/global_avg_loss": global_avg_loss * job_config.training.gradient_accumulation_steps,
+                    "loss_metrics/global_max_loss": global_max_loss * job_config.training.gradient_accumulation_steps,
                     "throughput(tps)": tps,
                     "mfu(%)": mfu,
                     "time_metrics/end_to_end(s)": time_end_to_end,
@@ -391,7 +396,7 @@ def main(job_config: JobConfig):
 
                 logger.info(
                     f"{color.cyan}step: {train_state.step:2}  "
-                    f"{color.green}loss: {global_avg_loss:7.4f}  "
+                    f"{color.green}loss: {global_avg_loss * job_config.training.gradient_accumulation_steps:7.4f}  "
                     f"{color.yellow}memory: {device_mem_stats.max_reserved_gib:5.2f}GiB"
                     f"({device_mem_stats.max_reserved_pct:.2f}%)  "
                     f"{color.blue}tps: {round(tps):,}  "
