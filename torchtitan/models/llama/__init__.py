@@ -7,6 +7,7 @@
 # Copyright (c) Meta Platforms, Inc. All Rights Reserved.
 
 from torchtitan.models.llama.model import Transformer, TransformerModelArgs
+from torchtitan.models.llama.Dropped_model_init import DroppedTransformer, DroppedTransformerModelArgs
 from torchtitan.optimizer import build_lr_schedulers, build_optimizers
 from torchtitan.train_spec import register_train_spec, TrainSpec
 
@@ -17,7 +18,9 @@ __all__ = [
     "parallelize_llama",
     "pipeline_llama",
     "TransformerModelArgs",
+    "DroppedTransformerModelArgs",
     "Transformer",
+    "DroppedTransformer",
     "llama3_configs",
 ]
 
@@ -27,6 +30,17 @@ llama3_configs = {
         dim=256, n_layers=8, n_heads=16, rope_theta=500000
     ),
     "3B": TransformerModelArgs(
+        dim=3072,
+        n_layers=28,
+        n_heads=24,
+        n_kv_heads=8,
+        ffn_dim_multiplier=1.3,
+        ffn_hidden_size=8192,
+        multiple_of=1024,
+        rope_theta=200000,
+        max_seq_len=4096,
+    ),
+    "3B_dropped_init": DroppedTransformerModelArgs(
         dim=3072,
         n_layers=28,
         n_heads=24,
@@ -71,6 +85,18 @@ register_train_spec(
     TrainSpec(
         name="llama3",
         cls=Transformer,
+        config=llama3_configs,
+        parallelize_fn=parallelize_llama,
+        pipelining_fn=pipeline_llama,
+        build_optimizers_fn=build_optimizers,
+        build_lr_schedulers_fn=build_lr_schedulers,
+    )
+)
+
+register_train_spec(
+    TrainSpec(
+        name="dropped_llama3",
+        cls=DroppedTransformer,
         config=llama3_configs,
         parallelize_fn=parallelize_llama,
         pipelining_fn=pipeline_llama,
