@@ -57,6 +57,51 @@ class JobConfig:
         self.parser = argparse.ArgumentParser(description="torchtitan arg parser.")
 
         self.parser.add_argument(
+            "--dropping.drop_freq",
+            type=int,
+            default=1000,
+            help="",
+        )
+
+        self.parser.add_argument(
+            "--dropping.num_each",
+            type=int,
+            default=2,
+            help="",
+        )
+
+        self.parser.add_argument(
+            "--dropping.sim_threshold",
+            type=float,
+            default=0.97,
+            help="",
+        )
+
+        self.parser.add_argument(
+            "--dropping.dataset",
+            type=str,
+            default="c4_mini",
+            help="",
+        )
+
+        self.parser.add_argument(
+            "--dropping.dataset_path",
+            type=str,
+            help="""
+                Path to the dataset in the file system. If provided, data will be
+                loaded from this path instead of downloaded.""",
+        )
+        self.parser.add_argument(
+            "--dropping.batch_size", type=int, default=8, help="Actually it is macro batch size"
+        )
+        self.parser.add_argument(
+            "--dropping.seq_len", type=int, default=2048, help="Sequence length"
+        )
+        self.parser.add_argument(
+            "--dropping.macro_steps", type=int, default=100, help=""
+        )
+
+        self.parser.add_argument(
             "--job.config_file",
             type=str,
             default=None,

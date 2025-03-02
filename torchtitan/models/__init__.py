@@ -10,4 +10,4 @@
 import torchtitan.models.llama  # noqa: F401
 
 
-model_name_to_tokenizer = {"llama3": "tiktoken"}
+model_name_to_tokenizer = {"llama3": "tiktoken", "dropped_llama3": "tiktoken"}

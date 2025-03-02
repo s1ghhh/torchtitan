@@ -2,7 +2,7 @@
 # NOTE: this toml config is a preset for 64 A100 GPUs.
 
 [job]
-dump_folder = "./outputs_llama3_3b_profiling"
+dump_folder = "./outputs_llama3_3b_profiling_half_attn"
 description = "Llama 3 3B training"
 
 [profiling]
@@ -21,7 +21,7 @@ name = "dropped_llama3"
 flavor = "3B_dropped_init"
 norm_type = "rmsnorm"  # layernorm / np_layernorm / rmsnorm
 tokenizer_path = "/mbz/users/haolong.jia/opt/models/llama3/tokenizer.model"
-drop_list = ['*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#']
+# drop_list = ['*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#']
 
 [optimizer]
 name = "AdamW"
@@ -32,13 +32,13 @@ batch_size = 4 # macro_batch
 seq_len = 4096
 warmup_steps = 2000  # lr scheduler warm up
 max_norm = 1.0  # grad norm clipping
-steps = 37500
+steps = 26300 # 40000 for 60b baseline
 data_parallel_replicate_degree = 1
 data_parallel_shard_degree = -1
 tensor_parallel_degree = 1
 compile = false
 dataset = "fineweb_edu"
-gradient_accumulation_steps = 8 # 8 * 16 * 4 = 512
+gradient_accumulation_steps = 4 # 4 * 32 * 4 = 512
 
 [experimental]
 context_parallel_degree = 1
