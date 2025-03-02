@@ -13,7 +13,7 @@ set -ex
 export CUDA_VISIBLE_DEVICES="4"
 NGPU=${NGPU:-"1"}
 LOG_RANK=${LOG_RANK:-0}
-CONFIG_FILE=${CONFIG_FILE:-"./train_configs/debug_dynamic_model.toml"}
+CONFIG_FILE=${CONFIG_FILE:-"./train_configs/llama3_3b_dynamic.toml"}
 
 overrides=""
 if [ $# -ne 0 ]; then

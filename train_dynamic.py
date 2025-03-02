@@ -297,7 +297,7 @@ def main(job_config: JobConfig):
             train_state.step += 1
             gc_handler.run(train_state.step)
 
-            if torch.distributed.get_rank() == 0:
+            if torch.distributed.get_rank() == 0 and train_state.step == 5:
                 import debugpy
                 try:
                     debugpy.listen(8201)
@@ -495,26 +495,30 @@ def main(job_config: JobConfig):
                 sims_attn_sum = [x / job_config.dropping.macro_steps for x in sims_attn_sum]
                 sims_mlp_sum = [x / job_config.dropping.macro_steps for x in sims_mlp_sum]
 
+
                 attn_filtered_indices = [(i, val) for i, val in enumerate(sims_attn_sum) if val > job_config.dropping.sim_threshold]
                 attn_top_indices = [i for i, _ in sorted(attn_filtered_indices, key=lambda x: x[1], reverse=True)[:job_config.dropping.num_each]]
                 mlp_filtered_indices = [(i, val) for i, val in enumerate(sims_mlp_sum) if val > job_config.dropping.sim_threshold]
                 mlp_top_indices = [i for i, _ in sorted(mlp_filtered_indices, key=lambda x: x[1], reverse=True)[:job_config.dropping.num_each]]
 
+                logger.info(f"attn_top_indices: {attn_top_indices} \n\nmlp_top_indices: {mlp_top_indices}")
+
                 logger.info("Start dropping modules")
                 model.drop_layer(attn_top_indices, mlp_top_indices, device)
                 logger.info("Finish dropping modules")
 
+                with torch.no_grad():
+                    logger.info("Start removing redudant optimizer state")
+                    new_params = list(model.parameters())
+                    for optimizer in optimizers:
+                        optimizer.param_groups[0]['params'] = new_params
 
-                logger.info("Start removing redudant optimizer state")
-                new_params = list(model.parameters())
-                optimizers.param_groups[0]['params'] = new_params
-
-                optimizer_state = optimizers.state
-                new_optimizer_state = {}
-                for param in new_params:
-                    if param in optimizer_state:
-                        new_optimizer_state[param] = optimizer_state[param]
-                optimizers.state = new_optimizer_state
+                        optimizer_state = optimizer.state
+                        new_optimizer_state = {}
+                        for param in new_params:
+                            if param in optimizer_state:
+                                new_optimizer_state[param] = optimizer_state[param]
+                        optimizer.state = new_optimizer_state
 
                 torch.distributed.barrier()
                 logger.info("Finish removing redudant optimizer state")
