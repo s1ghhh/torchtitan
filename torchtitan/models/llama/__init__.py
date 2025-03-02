@@ -8,6 +8,7 @@
 
 from torchtitan.models.llama.model import Transformer, TransformerModelArgs
 from torchtitan.models.llama.Dropped_model_init import DroppedTransformer, DroppedTransformerModelArgs
+from torchtitan.models.llama.Dynamic_model import DynamicTransformer, DynamicTransformerModelArgs
 from torchtitan.optimizer import build_lr_schedulers, build_optimizers
 from torchtitan.train_spec import register_train_spec, TrainSpec
 
@@ -19,8 +20,10 @@ __all__ = [
     "pipeline_llama",
     "TransformerModelArgs",
     "DroppedTransformerModelArgs",
+    "DynamicTransformerModelArgs",
     "Transformer",
     "DroppedTransformer",
+    "DynamicTransformer",
     "llama3_configs",
 ]
 
@@ -51,6 +54,28 @@ llama3_configs = {
         rope_theta=200000,
         max_seq_len=4096,
         drop_list=['*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#'],
+    ),
+    "3B_dynamic": DynamicTransformerModelArgs(
+        dim=3072,
+        n_layers=28,
+        n_heads=24,
+        n_kv_heads=8,
+        ffn_dim_multiplier=1.3,
+        ffn_hidden_size=8192,
+        multiple_of=1024,
+        rope_theta=200000,
+        max_seq_len=4096,
+    ),
+    "3B_dynamic_debug": DynamicTransformerModelArgs(
+        dim=512,
+        n_layers=8,
+        n_heads=16,
+        n_kv_heads=8,
+        ffn_dim_multiplier=1.3,
+        ffn_hidden_size=1024,
+        multiple_of=1024,
+        rope_theta=200000,
+        max_seq_len=1024,
     ),
     "8B": TransformerModelArgs(
         dim=4096,
@@ -98,6 +123,18 @@ register_train_spec(
     TrainSpec(
         name="dropped_llama3",
         cls=DroppedTransformer,
+        config=llama3_configs,
+        parallelize_fn=parallelize_llama,
+        pipelining_fn=pipeline_llama,
+        build_optimizers_fn=build_optimizers,
+        build_lr_schedulers_fn=build_lr_schedulers,
+    )
+)
+
+register_train_spec(
+    TrainSpec(
+        name="dynamic_llama3",
+        cls=DynamicTransformer,
         config=llama3_configs,
         parallelize_fn=parallelize_llama,
         pipelining_fn=pipeline_llama,

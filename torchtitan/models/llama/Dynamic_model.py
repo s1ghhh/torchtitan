@@ -366,14 +366,14 @@ class DynamicTransformerBlock(nn.Module):
             torch.Tensor: Output tensor after applying attention and feedforward layers.
 
         """
-        sim_attn = -1
-        sim_mlp = -1
+        sim_attn = torch.tensor(-1.0)
+        sim_mlp = torch.tensor(-1.0)
 
         if "*" in self.drop_type:
             h_attn = last_h + self.attention(self.attention_norm(last_h), freqs_cis)
 
             if "*" in layer_sim_type:
-                sim_attn = F.cosine_similarity(h_attn, last_h, dim=-1).mean()
+                sim_attn = F.cosine_similarity(h_attn.to(torch.float32), last_h.to(torch.float32), dim=-1, eps=1e-6).mean()
 
             del last_h
         else:
@@ -382,14 +382,13 @@ class DynamicTransformerBlock(nn.Module):
         if "#" in self.drop_type:
             h_mlp = h_attn + self.feed_forward(self.ffn_norm(h_attn))
 
-            if "*" in layer_sim_type:
-                sim_mlp = F.cosine_similarity(h_mlp, h_attn, dim=-1).mean()
-        
+            if "#" in layer_sim_type:
+                sim_mlp = F.cosine_similarity(h_mlp.to(torch.float32), h_attn.to(torch.float32), dim=-1, eps=1e-6).mean()
             del h_attn
         else:
             h_mlp = h_attn
 
-        return h_mlp, sim_attn, sim_mlp
+        return h_mlp, sim_attn.item(), sim_mlp.item()
 
 
     def init_weights(self):
@@ -562,15 +561,87 @@ class DynamicTransformer(nn.Module, ModelProtocol):
         #         self.layers[str(layer_id)].ffn_norm = nn.Identity().to(self.layers[str(layer_id)].ffn_norm.device)
         #         self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
 
+        # self.layers["0"]
+        # DynamicTransformerBlock(
+        # (attention): Attention(
+        #     (wq): Linear(in_features=512, out_features=512, bias=False)
+        #     (wk): Linear(in_features=512, out_features=256, bias=False)
+        #     (wv): Linear(in_features=512, out_features=256, bias=False)
+        #     (wo): Linear(in_features=512, out_features=512, bias=False)
+        # )
+        # (attention_norm): RMSNorm()
+        # (feed_forward): FeedForward(
+        #     (w1): Linear(in_features=512, out_features=1024, bias=False)
+        #     (w2): Linear(in_features=1024, out_features=512, bias=False)
+        #     (w3): Linear(in_features=512, out_features=1024, bias=False)
+        # )
+        # (ffn_norm): RMSNorm()
+        # )
+        # self.layers["1"]
+        # CheckpointWrapper(
+        # (_checkpoint_wrapped_module): DynamicTransformerBlock(
+        #     (attention): Attention(
+        #     (wq): Linear(in_features=512, out_features=512, bias=False)
+        #     (wk): Linear(in_features=512, out_features=256, bias=False)
+        #     (wv): Linear(in_features=512, out_features=256, bias=False)
+        #     (wo): Linear(in_features=512, out_features=512, bias=False)
+        #     )
+        #     (attention_norm): RMSNorm()
+        #     (feed_forward): FeedForward(
+        #     (w1): Linear(in_features=512, out_features=1024, bias=False)
+        #     (w2): Linear(in_features=1024, out_features=512, bias=False)
+        #     (w3): Linear(in_features=512, out_features=1024, bias=False)
+        #     )
+        #     (ffn_norm): RMSNorm()
+        # )
+        # )
+
+
+        # for layer_id in range(len(self.layers.values())):
+        #     if layer_id in dropped_attn_list:
+        #         try:
+        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.attention = nn.Identity().to(device)
+        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.attention_norm = nn.Identity().to(device)
+        #         except:
+        #             self.layers[str(layer_id)].attention = nn.Identity().to(device)
+        #             self.layers[str(layer_id)].attention_norm = nn.Identity().to(device)
+        #         self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("*", "")
+        #     if layer_id in dropped_mlp_list:
+        #         try:
+        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.feed_forward = nn.Identity().to(device)
+        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.ffn_norm = nn.Identity().to(device)
+        #         except:
+        #             self.layers[str(layer_id)].feed_forward = nn.Identity().to(device)
+        #             self.layers[str(layer_id)].ffn_norm = nn.Identity().to(device)
+        #         self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
+
         for layer_id in range(len(self.layers.values())):
             if layer_id in dropped_attn_list:
-                self.layers[str(layer_id)].attention = nn.Identity().to(device)
-                self.layers[str(layer_id)].attention_norm = nn.Identity().to(device)
-                self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("*", "")
+                try:
+                    del self.layers[str(layer_id)]._checkpoint_wrapped_module.attention
+                    del self.layers[str(layer_id)]._checkpoint_wrapped_module.attention_norm
+                    self.layers[str(layer_id)]._checkpoint_wrapped_module.attention = None
+                    self.layers[str(layer_id)]._checkpoint_wrapped_module.attention_norm = None
+                    self.layers[str(layer_id)]._checkpoint_wrapped_module.drop_type = self.layers[str(layer_id)].drop_type.replace("*", "")
+                except:
+                    del self.layers[str(layer_id)].attention
+                    del self.layers[str(layer_id)].attention_norm
+                    self.layers[str(layer_id)].attention = None
+                    self.layers[str(layer_id)].attention_norm = None
+                    self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("*", "")
             if layer_id in dropped_mlp_list:
-                self.layers[str(layer_id)].feed_forward = nn.Identity().to(device)
-                self.layers[str(layer_id)].ffn_norm = nn.Identity().to(device)
-                self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
+                try:
+                    del self.layers[str(layer_id)]._checkpoint_wrapped_module.feed_forward
+                    del self.layers[str(layer_id)]._checkpoint_wrapped_module.ffn_norm
+                    self.layers[str(layer_id)]._checkpoint_wrapped_module.feed_forward = None
+                    self.layers[str(layer_id)]._checkpoint_wrapped_module.ffn_norm = None
+                    self.layers[str(layer_id)]._checkpoint_wrapped_module.drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
+                except:
+                    del self.layers[str(layer_id)].feed_forward
+                    del self.layers[str(layer_id)].ffn_norm
+                    self.layers[str(layer_id)].feed_forward = None
+                    self.layers[str(layer_id)].ffn_norm = None
+                    self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
 
 
     @torch.no_grad

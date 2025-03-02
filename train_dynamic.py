@@ -26,6 +26,39 @@ from torchtitan.train_spec import get_train_spec
 from torchtitan.utils import device_module, device_type, import_module_from_path
 from torchtitan.models.llama.Dynamic_model import DynamicTransformer
 
+# @torch.no_grad
+# def drop_layer(model, dropped_attn_list: list, dropped_mlp_list: list, device):
+#     """
+#     Drop some layers.
+
+#     Args:
+        
+
+#     Returns:
+        
+
+#     """
+
+#     # for layer_id in range(len(self.layers.values())):
+#     #     if layer_id in dropped_attn_list:
+#     #         self.layers[str(layer_id)].attention = nn.Identity().to(self.layers[str(layer_id)].attention.device)
+#     #         self.layers[str(layer_id)].attention_norm = nn.Identity().to(self.layers[str(layer_id)].attention_norm.device)
+#     #         self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("*", "")
+#     #     if layer_id in dropped_mlp_list:
+#     #         self.layers[str(layer_id)].feed_forward = nn.Identity().to(self.layers[str(layer_id)].feed_forward.device)
+#     #         self.layers[str(layer_id)].ffn_norm = nn.Identity().to(self.layers[str(layer_id)].ffn_norm.device)
+#     #         self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
+
+#     for layer_id in range(len(self.layers.values())):
+#         if layer_id in dropped_attn_list:
+#             self.layers[str(layer_id)]._checkpoint_wrapped_module.attention = nn.Identity().to(device)
+#             self.layers[str(layer_id)]._checkpoint_wrapped_module.attention_norm = nn.Identity().to(device)
+#             self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("*", "")
+#         if layer_id in dropped_mlp_list:
+#             self.layers[str(layer_id)]._checkpoint_wrapped_module.feed_forward = nn.Identity().to(device)
+#             self.layers[str(layer_id)]._checkpoint_wrapped_module.ffn_norm = nn.Identity().to(device)
+#             self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
+
 # Enable debug tracing on failure: https://pytorch.org/docs/stable/elastic/errors.html
 @record
 def main(job_config: JobConfig):
@@ -264,6 +297,15 @@ def main(job_config: JobConfig):
             train_state.step += 1
             gc_handler.run(train_state.step)
 
+            if torch.distributed.get_rank() == 0:
+                import debugpy
+                try:
+                    debugpy.listen(8201)
+                    print("Waiting for debugger attach")
+                    debugpy.wait_for_client()
+                except Exception as e:
+                    print(e)
+
             optimizers.zero_grad()
             for micro_step in range(job_config.training.gradient_accumulation_steps):
                 # get batch
@@ -427,7 +469,7 @@ def main(job_config: JobConfig):
                 )
 
             if train_state.step % job_config.dropping.drop_freq == 0 and isinstance(model, DynamicTransformer):
-                
+
                 data_loader_sims = build_hf_data_loader(
                     job_config.dropping.dataset,
                     job_config.dropping.dataset_path,
@@ -446,8 +488,8 @@ def main(job_config: JobConfig):
                     input_ids, labels = batch
                     input_ids = input_ids.to(device_type)
                     sims_attn, sims_mlp = model.forward_for_sim_layer(input_ids, layer_sim_type="*")
-                    sims_attn_sum = sims_attn_sum + sims_attn
-                    sims_mlp_sum = sims_mlp_sum + sims_mlp
+                    sims_attn_sum = list(map(lambda a, b: a + b, sims_attn_sum, sims_attn))
+                    sims_mlp_sum = list(map(lambda a, b: a + b, sims_mlp_sum, sims_mlp))
 
                 logger.info("Finish profiling cos_sims")
                 sims_attn_sum = [x / job_config.dropping.macro_steps for x in sims_attn_sum]

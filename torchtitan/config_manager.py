@@ -262,7 +262,7 @@ class JobConfig:
                 loaded from this path instead of downloaded.""",
         )
         self.parser.add_argument(
-            "--training.gradient_accumulation_steps", type=int, default=8, help="Gradient accumulation"
+            "--training.gradient_accumulation_steps", type=int, default=1, help="Gradient accumulation"
         )
         self.parser.add_argument(
             "--training.batch_size", type=int, default=8, help="Actually it is macro batch size"
