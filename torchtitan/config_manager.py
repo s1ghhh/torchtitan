@@ -71,9 +71,16 @@ class JobConfig:
         )
 
         self.parser.add_argument(
+            "--dropping.total_num",
+            type=int,
+            default=14,
+            help="",
+        )
+
+        self.parser.add_argument(
             "--dropping.sim_threshold",
             type=float,
-            default=0.97,
+            default=0.8,
             help="",
         )
 
