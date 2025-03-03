@@ -324,10 +324,36 @@ class DynamicTransformerBlock(nn.Module):
         else:
             self.weight_init_std = 0.02 / (2 * self.num_layers) ** 0.5
 
+    # def forward_ori(
+    #     self,
+    #     h: torch.Tensor,
+    #     freqs_cis: torch.Tensor,
+    # ):
+    #     """
+    #     Perform a forward pass through the TransformerBlock.
+
+    #     Args:
+    #         h (torch.Tensor): Input tensor.
+    #         freqs_cis (torch.Tensor): Precomputed cosine and sine frequencies.
+
+    #     Returns:
+    #         torch.Tensor: Output tensor after applying attention and feedforward layers.
+
+    #     """
+    #     if "*" in self.drop_type:
+    #         h = h + self.attention(self.attention_norm(h), freqs_cis)
+
+    #     if "#" in self.drop_type:
+    #         h = h + self.feed_forward(self.ffn_norm(h))
+        
+    #     return h
+    
+    # @torch.no_grad
     def forward(
         self,
-        h: torch.Tensor,
+        last_h: torch.Tensor,
         freqs_cis: torch.Tensor,
+        layer_sim_type: str = "",
     ):
         """
         Perform a forward pass through the TransformerBlock.
@@ -340,14 +366,31 @@ class DynamicTransformerBlock(nn.Module):
             torch.Tensor: Output tensor after applying attention and feedforward layers.
 
         """
+
+        sim_attn = torch.tensor(-1.0)
+        sim_mlp = torch.tensor(-1.0)
+
         if "*" in self.drop_type:
-            h = h + self.attention(self.attention_norm(h), freqs_cis)
+            h_attn = last_h + self.attention(self.attention_norm(last_h), freqs_cis)
+
+            if "*" in layer_sim_type:
+                sim_attn = F.cosine_similarity(h_attn.to(torch.float32), last_h.to(torch.float32), dim=-1, eps=1e-6).mean()
+
+            # del last_h
+        else:
+            h_attn = last_h
 
         if "#" in self.drop_type:
-            h = h + self.feed_forward(self.ffn_norm(h))
-        
-        return h
-    
+            h_mlp = h_attn + self.feed_forward(self.ffn_norm(h_attn))
+
+            if "#" in layer_sim_type:
+                sim_mlp = F.cosine_similarity(h_mlp.to(torch.float32), h_attn.to(torch.float32), dim=-1, eps=1e-6).mean()
+            # del h_attn
+        else:
+            h_mlp = h_attn
+
+        return h_mlp, sim_attn.item(), sim_mlp.item()
+
     @torch.no_grad
     def forward_for_sim(
         self,
@@ -366,6 +409,7 @@ class DynamicTransformerBlock(nn.Module):
             torch.Tensor: Output tensor after applying attention and feedforward layers.
 
         """
+
         sim_attn = torch.tensor(-1.0)
         sim_mlp = torch.tensor(-1.0)
 
@@ -491,7 +535,28 @@ class DynamicTransformer(nn.Module, ModelProtocol):
             self.model_args.rope_theta,
         )
 
-    def forward(self, tokens: torch.Tensor):
+    # def forward_ori(self, tokens: torch.Tensor):
+    #     """
+    #     Perform a forward pass through the Transformer model.
+
+    #     Args:
+    #         tokens (torch.Tensor): Input token indices.
+
+    #     Returns:
+    #         torch.Tensor: Output logits after applying the Transformer model.
+
+    #     """
+    #     # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
+    #     h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
+
+    #     for layer in self.layers.values():
+    #         h = layer(h, self.freqs_cis)
+
+    #     h = self.norm(h) if self.norm else h
+    #     output = self.output(h) if self.output else h
+    #     return output
+
+    def forward(self, tokens: torch.Tensor, layer_sim_type: str = ""):
         """
         Perform a forward pass through the Transformer model.
 
@@ -503,14 +568,21 @@ class DynamicTransformer(nn.Module, ModelProtocol):
 
         """
         # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
+
+        sims_attn = []
+        sims_mlp = []
+
         h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
 
         for layer in self.layers.values():
-            h = layer(h, self.freqs_cis)
+            # h, sim_attn, sim_mlp = layer.forward_for_sim(h, self.freqs_cis, layer_sim_type)
+            h, sim_attn, sim_mlp = layer(h, self.freqs_cis, layer_sim_type)
+            sims_attn.append(sim_attn)
+            sims_mlp.append(sim_mlp)
 
         h = self.norm(h) if self.norm else h
         output = self.output(h) if self.output else h
-        return output
+        return output, sims_attn, sims_mlp
 
     @torch.no_grad
     def forward_for_sim_layer(self, tokens: torch.Tensor, layer_sim_type: str):

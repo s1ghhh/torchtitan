@@ -182,6 +182,15 @@ def main(job_config: JobConfig):
         init_device = device_type
         buffer_device = None
 
+    # if torch.distributed.get_rank() == 0:
+    #     import debugpy
+    #     try:
+    #         debugpy.listen(8201)
+    #         print("Waiting for debugger attach")
+    #         debugpy.wait_for_client()
+    #     except Exception as e:
+    #         print(e)
+
     # apply parallelisms and initialization
     if parallel_dims.pp_enabled:
         # apply PT-D Pipeline Parallel
@@ -208,11 +217,15 @@ def main(job_config: JobConfig):
             m.train()
     else:
         # apply PT-D Tensor Parallel, activation checkpointing, torch.compile, Data Parallel
+        # import inspect
+        # logger.info(inspect.getmro(type(model)))  
+
         train_spec.parallelize_fn(model, world_mesh, parallel_dims, job_config)
         model.to_empty(device=init_device)
         with torch.no_grad():
             model.init_weights(buffer_device=buffer_device)
         model.train()
+        # logger.info(inspect.getmro(type(model)))  
 
         model_parts = [model]
 
@@ -297,14 +310,14 @@ def main(job_config: JobConfig):
             train_state.step += 1
             gc_handler.run(train_state.step)
 
-            if torch.distributed.get_rank() == 0 and train_state.step == 5:
-                import debugpy
-                try:
-                    debugpy.listen(8201)
-                    print("Waiting for debugger attach")
-                    debugpy.wait_for_client()
-                except Exception as e:
-                    print(e)
+            # if torch.distributed.get_rank() == 0 and train_state.step == 1:
+            #     import debugpy
+            #     try:
+            #         debugpy.listen(8201)
+            #         print("Waiting for debugger attach")
+            #         debugpy.wait_for_client()
+            #     except Exception as e:
+            #         print(e)
 
             optimizers.zero_grad()
             for micro_step in range(job_config.training.gradient_accumulation_steps):
@@ -354,7 +367,7 @@ def main(job_config: JobConfig):
                 else:
                     # Non-PP forward / backward
                     with train_context(optional_context_parallel_ctx):
-                        pred = model(input_ids)
+                        pred, _, _ = model(input_ids)
                         loss = loss_fn(pred, labels)
                         # pred.shape=(bs, seq_len, vocab_size)
                         # need to free to before bwd to avoid peaking memory
@@ -469,45 +482,46 @@ def main(job_config: JobConfig):
                 )
 
             if train_state.step % job_config.dropping.drop_freq == 0 and isinstance(model, DynamicTransformer):
-
-                data_loader_sims = build_hf_data_loader(
-                    job_config.dropping.dataset,
-                    job_config.dropping.dataset_path,
-                    tokenizer,
-                    job_config.dropping.batch_size,
-                    job_config.dropping.seq_len,
-                    dp_degree,
-                    dp_rank,
-                )
-                sim_data_iterator = iter(data_loader_sims)
-                sims_attn_sum = [0 for _ in range(model.n_layers)]
-                sims_mlp_sum = [0 for _ in range(model.n_layers)]
-                logger.info("Start profiling cos_sims")
-                for sim_step in range(job_config.dropping.macro_steps):
-                    batch = next(sim_data_iterator)
-                    input_ids, labels = batch
-                    input_ids = input_ids.to(device_type)
-                    sims_attn, sims_mlp = model.forward_for_sim_layer(input_ids, layer_sim_type="*")
-                    sims_attn_sum = list(map(lambda a, b: a + b, sims_attn_sum, sims_attn))
-                    sims_mlp_sum = list(map(lambda a, b: a + b, sims_mlp_sum, sims_mlp))
-
-                logger.info("Finish profiling cos_sims")
-                sims_attn_sum = [x / job_config.dropping.macro_steps for x in sims_attn_sum]
-                sims_mlp_sum = [x / job_config.dropping.macro_steps for x in sims_mlp_sum]
-
-
-                attn_filtered_indices = [(i, val) for i, val in enumerate(sims_attn_sum) if val > job_config.dropping.sim_threshold]
-                attn_top_indices = [i for i, _ in sorted(attn_filtered_indices, key=lambda x: x[1], reverse=True)[:job_config.dropping.num_each]]
-                mlp_filtered_indices = [(i, val) for i, val in enumerate(sims_mlp_sum) if val > job_config.dropping.sim_threshold]
-                mlp_top_indices = [i for i, _ in sorted(mlp_filtered_indices, key=lambda x: x[1], reverse=True)[:job_config.dropping.num_each]]
-
-                logger.info(f"attn_top_indices: {attn_top_indices} \n\nmlp_top_indices: {mlp_top_indices}")
-
-                logger.info("Start dropping modules")
-                model.drop_layer(attn_top_indices, mlp_top_indices, device)
-                logger.info("Finish dropping modules")
-
                 with torch.no_grad():
+                    data_loader_sims = build_hf_data_loader(
+                        job_config.dropping.dataset,
+                        job_config.dropping.dataset_path,
+                        tokenizer,
+                        job_config.dropping.batch_size,
+                        job_config.dropping.seq_len,
+                        dp_degree,
+                        dp_rank,
+                    )
+                    sim_data_iterator = iter(data_loader_sims)
+                    sims_attn_sum = [0 for _ in range(model.n_layers)]
+                    sims_mlp_sum = [0 for _ in range(model.n_layers)]
+                    logger.info("Start profiling cos_sims")
+                    for sim_step in range(job_config.dropping.macro_steps):
+                        batch = next(sim_data_iterator)
+                        input_ids, labels = batch
+                        input_ids = input_ids.to(device_type)
+                        output, sims_attn, sims_mlp = model(input_ids, layer_sim_type="*")
+                        del output
+                        sims_attn_sum = list(map(lambda a, b: a + b, sims_attn_sum, sims_attn))
+                        sims_mlp_sum = list(map(lambda a, b: a + b, sims_mlp_sum, sims_mlp))
+
+                    logger.info("Finish profiling cos_sims")
+                    sims_attn_sum = [x / job_config.dropping.macro_steps for x in sims_attn_sum]
+                    sims_mlp_sum = [x / job_config.dropping.macro_steps for x in sims_mlp_sum]
+
+
+                    attn_filtered_indices = [(i, val) for i, val in enumerate(sims_attn_sum) if val > job_config.dropping.sim_threshold]
+                    attn_top_indices = [i for i, _ in sorted(attn_filtered_indices, key=lambda x: x[1], reverse=True)[:job_config.dropping.num_each]]
+                    mlp_filtered_indices = [(i, val) for i, val in enumerate(sims_mlp_sum) if val > job_config.dropping.sim_threshold]
+                    mlp_top_indices = [i for i, _ in sorted(mlp_filtered_indices, key=lambda x: x[1], reverse=True)[:job_config.dropping.num_each]]
+
+                    logger.info(f"attn_top_indices: {attn_top_indices} \n\nmlp_top_indices: {mlp_top_indices}")
+
+                    logger.info("Start dropping modules")
+                    model.drop_layer(attn_top_indices, mlp_top_indices, device)
+                    logger.info("Finish dropping modules")
+
+                    
                     logger.info("Start removing redudant optimizer state")
                     new_params = list(model.parameters())
                     for optimizer in optimizers:
@@ -522,6 +536,8 @@ def main(job_config: JobConfig):
 
                 torch.distributed.barrier()
                 logger.info("Finish removing redudant optimizer state")
+
+            optimizers.zero_grad()
 
 
 
