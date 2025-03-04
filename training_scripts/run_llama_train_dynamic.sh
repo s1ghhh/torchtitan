@@ -5,6 +5,11 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+export NCCL_BLOCKING_WAIT=1
+export NCCL_ASYNC_ERROR_HANDLING=1
+export NCCL_TIMEOUT=3600  # 1 hour timeout
+
+
 set -ex
 
 # use envs as local overrides for convenience

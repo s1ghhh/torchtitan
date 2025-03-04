@@ -100,7 +100,7 @@ class OptimizersContainer(Optimizer):
     def state_dict(self) -> Dict[str, Any]:
         func = functools.partial(
             get_optimizer_state_dict,
-            options=StateDictOptions(flatten_optimizer_state_dict=True),
+            options=StateDictOptions(flatten_optimizer_state_dict=True, ignore_frozen_params=True, strict=False),
         )
         return {
             k: v
@@ -112,7 +112,7 @@ class OptimizersContainer(Optimizer):
         func = functools.partial(
             set_optimizer_state_dict,
             optim_state_dict=state_dict,
-            options=StateDictOptions(flatten_optimizer_state_dict=True),
+            options=StateDictOptions(flatten_optimizer_state_dict=True, ignore_frozen_params=True, strict=False),
         )
         list(map(func, self.model_parts, self.optimizers))
 

@@ -59,6 +59,44 @@ from torchtitan.models.llama.Dynamic_model import DynamicTransformer
 #             self.layers[str(layer_id)]._checkpoint_wrapped_module.ffn_norm = nn.Identity().to(device)
 #             self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
 
+# def rebuild_adamw_optimizers_container(model, optimizers_container):
+#     new_params = list(model.parameters())
+#     new_optimizers = []
+    
+#     # 获取原 `OptimizersContainer` 的 `optimizer_kwargs` 和 `name`
+#     optimizer_kwargs = optimizers_container.optimizer_kwargs
+#     name = optimizers_container.name
+
+#     # 遍历原 container 中的每个优化器（假设都是 AdamW）
+#     for optimizer in optimizers_container:
+#         # 从参数组中提取超参数（这里假设只有一个参数组）
+#         old_pg = optimizer.param_groups[0]
+#         lr = old_pg.get('lr', 1e-3)
+#         betas = old_pg.get('betas', (0.9, 0.999))
+#         eps = old_pg.get('eps', 1e-8)
+#         weight_decay = old_pg.get('weight_decay', 0)
+#         amsgrad = old_pg.get('amsgrad', False)
+        
+#         # 创建新的 AdamW 优化器（使用新的模型参数）
+#         new_optimizer = torch.optim.AdamW(new_params, lr=lr, betas=betas,
+#                                             eps=eps, weight_decay=weight_decay, amsgrad=amsgrad)
+        
+#         # 将旧优化器中与新参数对应的状态转移到新的优化器中
+#         new_optimizer_state = {}
+#         for param in new_params:
+#             for old_param, state in optimizer.state.items():
+#                 if param is old_param:
+#                     new_optimizer_state[param] = state
+#                     break
+        
+#         new_optimizer.state = new_optimizer_state
+#         new_optimizers.append(new_optimizer)
+
+#     # 以新的优化器列表构造一个新的 OptimizersContainer
+#     new_optimizers_container = type(optimizers_container)(new_optimizers, optimizer_kwargs, name)
+    
+#     return new_optimizers_container
+
 # Enable debug tracing on failure: https://pytorch.org/docs/stable/elastic/errors.html
 @record
 def main(job_config: JobConfig):
@@ -310,14 +348,14 @@ def main(job_config: JobConfig):
             train_state.step += 1
             gc_handler.run(train_state.step)
 
-            # if torch.distributed.get_rank() == 0 and train_state.step == 1:
-            #     import debugpy
-            #     try:
-            #         debugpy.listen(8201)
-            #         print("Waiting for debugger attach")
-            #         debugpy.wait_for_client()
-            #     except Exception as e:
-            #         print(e)
+            if torch.distributed.get_rank() == 0 and train_state.step == 1:
+                import debugpy
+                try:
+                    debugpy.listen(8201)
+                    print("Waiting for debugger attach")
+                    debugpy.wait_for_client()
+                except Exception as e:
+                    print(e)
 
             optimizers.zero_grad()
             for micro_step in range(job_config.training.gradient_accumulation_steps):
@@ -521,21 +559,72 @@ def main(job_config: JobConfig):
                     model.drop_layer(attn_top_indices, mlp_top_indices, device)
                     logger.info("Finish dropping modules")
 
-                    
-                    logger.info("Start removing redudant optimizer state")
-                    new_params = list(model.parameters())
-                    for optimizer in optimizers:
-                        optimizer.param_groups[0]['params'] = new_params
+                    # optimizers = rebuild_adamw_optimizers_container(model, optimizers)
 
-                        optimizer_state = optimizer.state
-                        new_optimizer_state = {}
-                        for param in new_params:
-                            if param in optimizer_state:
-                                new_optimizer_state[param] = optimizer_state[param]
-                        optimizer.state = new_optimizer_state
+                    # logger.info("Start removing redundant optimizer state")
 
-                torch.distributed.barrier()
-                logger.info("Finish removing redudant optimizer state")
+                    # new_params = list(model.parameters())
+
+                    # # 获取优化器的现有参数
+                    # for optimizer in optimizers.optimizers:
+                    #     existing_params = optimizer.param_groups[0]['params']
+
+                    #     # 确保 new_params 里的参数类型与 optimizer.param_groups 一致
+                    #     new_params = [p if isinstance(p, type(existing_params[0])) else existing_params[0].to(p.device) for p in new_params]
+
+                    #     # 只保留仍然有效的参数
+                    #     optimizer.param_groups[0]['params'] = [p for p in new_params if any(torch.equal(p, ep) for ep in existing_params)]
+
+                    #     # 清理 state
+                    #     optimizer_state = optimizer.state
+                    #     optimizer.state = {param: optimizer_state[param] for param in optimizer.param_groups[0]['params'] if param in optimizer_state}
+
+                    # logger.info("Finish removing redundant optimizer state")
+
+
+                    # logger.info("Checking optimizer parameters after dropping modules...")
+                    # for optimizer in optimizers.optimizers:
+                    #     param_ids = {id(p) for p in optimizer.param_groups[0]['params']}
+                    #     state_ids = set(optimizer.state.keys())
+
+                    #     missing_params = state_ids - param_ids
+                    #     if missing_params:
+                    #         logger.warning(f"Optimizer state contains {len(missing_params)} missing params!")
+
+                    #     orphan_states = param_ids - state_ids
+                    #     if orphan_states:
+                    #         logger.warning(f"Optimizer param_groups contain {len(orphan_states)} orphan params!")
+
+
+
+                #     logger.info("Start removing redudant optimizer state")
+                #     new_params = list(model.parameters())
+                #     logger.info(f"s1ghhhh: {type(optimizers)}")
+                #     for optimizer in optimizers:
+
+                #         optimizer_state = optimizer.state
+                #         new_optimizer_state = {}
+
+                #         lost_param_list = []
+                #         for param in new_params:
+                #             if param in optimizer_state:
+                #                 new_optimizer_state[param] = optimizer_state[param]
+                #             else:
+                #                 logger.info(f"param {param}")
+                #                 lost_param_list.append(param)
+                #         torch.distributed.barrier()
+                #         for name, param in model.state_dict().items():
+                #             for shit in lost_param_list:
+                #                 try:
+                #                     if torch.equal(param.to_local(), shit):
+                #                         logger.info(name)
+                #                 except:
+                #                     logger.info(f"666 {name}")
+                #         torch.distributed.barrier()
+                #         optimizer.state = new_optimizer_state
+
+                # torch.distributed.barrier()
+                # logger.info("Finish removing redudant optimizer state")
 
             optimizers.zero_grad()
 

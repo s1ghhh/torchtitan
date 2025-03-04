@@ -2,13 +2,13 @@
 # NOTE: this toml config is a preset for 64 A100 GPUs.
 
 [dropping]
-drop_freq = 4
-num_each = 1
+drop_freq = 20
+num_each = 4
 sim_threshold = 0.8
 dataset = "c4_test"  # supported datasets: c4_test (2K), c4 (177M)
 batch_size = 1
-seq_len = 4096
-macro_steps = 256
+seq_len = 1024
+macro_steps = 4
 
 [job]
 dump_folder = "./outputs_llama3_3b_dynamic_half"
@@ -36,11 +36,11 @@ name = "AdamW"
 lr = 3e-4
 
 [training]
-batch_size = 1 # macro_batch
+batch_size = 2 # macro_batch
 seq_len = 4096
-warmup_steps = 2000  # lr scheduler warmxw up
+warmup_steps = 20  # lr scheduler warmxw up
 max_norm = 1.0  # grad norm clipping
-steps = 23683
+steps = 100
 data_parallel_replicate_degree = 1
 data_parallel_shard_degree = -1
 tensor_parallel_degree = 1
@@ -56,7 +56,7 @@ pipeline_parallel_degree = 1
 enable_checkpoint = true
 folder = "checkpoint"
 interval_type = "steps"
-interval = 500
+interval = 20
 model_weights_only = false
 export_dtype = "float32"
 async_mode = "disabled" # ["disabled", "async", "async_with_pinned_mem"]
