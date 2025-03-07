@@ -348,14 +348,14 @@ def main(job_config: JobConfig):
             train_state.step += 1
             gc_handler.run(train_state.step)
 
-            if torch.distributed.get_rank() == 0 and train_state.step == 1:
-                import debugpy
-                try:
-                    debugpy.listen(8201)
-                    print("Waiting for debugger attach")
-                    debugpy.wait_for_client()
-                except Exception as e:
-                    print(e)
+            # if torch.distributed.get_rank() == 0 and train_state.step == 1:
+            #     import debugpy
+            #     try:
+            #         debugpy.listen(8201)
+            #         print("Waiting for debugger attach")
+            #         debugpy.wait_for_client()
+            #     except Exception as e:
+            #         print(e)
 
             optimizers.zero_grad()
             for micro_step in range(job_config.training.gradient_accumulation_steps):
@@ -501,6 +501,8 @@ def main(job_config: JobConfig):
                 time_last_log = time.perf_counter()
                 device_memory_monitor.reset_peak_stats()
 
+            # if train_state.step % 4 == 0:
+            #     print()
             checkpoint.save(
                 train_state.step, force=(train_state.step == job_config.training.steps)
             )
@@ -597,34 +599,57 @@ def main(job_config: JobConfig):
 
 
 
-                #     logger.info("Start removing redudant optimizer state")
-                #     new_params = list(model.parameters())
-                #     logger.info(f"s1ghhhh: {type(optimizers)}")
-                #     for optimizer in optimizers:
+                    logger.info("Start removing redudant optimizer state")
+                    # new_params = list(model.parameters())
+                    logger.info(f"s1ghhhh: {type(optimizers)}")
+                    for optimizer in optimizers:
 
-                #         optimizer_state = optimizer.state
-                #         new_optimizer_state = {}
+                        optimizer_state = optimizer.state
+                        new_optimizer_state = {}
 
-                #         lost_param_list = []
-                #         for param in new_params:
-                #             if param in optimizer_state:
-                #                 new_optimizer_state[param] = optimizer_state[param]
-                #             else:
-                #                 logger.info(f"param {param}")
-                #                 lost_param_list.append(param)
-                #         torch.distributed.barrier()
-                #         for name, param in model.state_dict().items():
-                #             for shit in lost_param_list:
-                #                 try:
-                #                     if torch.equal(param.to_local(), shit):
-                #                         logger.info(name)
-                #                 except:
-                #                     logger.info(f"666 {name}")
-                #         torch.distributed.barrier()
-                #         optimizer.state = new_optimizer_state
+                        lost_param_list = []
+                        
+                        fuck_list = list(optimizer_state.items())
+                        idx = 0
+                        for name, param in model.state_dict().items():
+                            
+                            for kkk, vvv in fuck_list:
+                                # if torch.equal(param, kkk._local_tensor):
+                                # if isinstance(kkk, torch.distributed._tensor.DTensor):
+                                #     kkk = kkk.to_local()
+                                # if isinstance(param, torch.distributed._tensor.DTensor):
+                                #     param = param.to_local()
+                                # print(type(kkk))
+                                # print(type(param))
+                                if torch.equal(param.to_local() if isinstance(param, torch.distributed._tensor.DTensor) else param, kkk.to_local() if isinstance(kkk, torch.distributed._tensor.DTensor) else kkk):
+                                    new_optimizer_state[idx] = optimizer_state[kkk]
+                                    idx+=1
+                                    break
 
-                # torch.distributed.barrier()
-                # logger.info("Finish removing redudant optimizer state")
+                                    # logger.info(f"{name} {param}")
+                                    # lost_param_list.append(name)
+                        torch.distributed.barrier()
+                        for name, param in model.state_dict().items():
+                            for shit in lost_param_list:
+                                try:
+                                    if torch.equal(param.to_local(), shit):
+                                        logger.info(name)
+                                except:
+                                    logger.info(f"666 {name}")
+                        torch.distributed.barrier()
+                    param_groups = optimizers.optimizers[0].state_dict()["param_groups"]
+                    param_groups[0]["params"] = [i for i in range(len(new_optimizer_state))]
+                    state_dict = {"state": new_optimizer_state, "param_groups": param_groups}
+                    # optimizer.state = new_optimizer_state
+                    # optimizers.optimizers[0].load_state_dict(state_dict)
+                # optimizers.load_state_dict( optimizers.optimizers[0].state_dict())
+                new_optimizers = train_spec.build_optimizers_fn([model], job_config)
+                new_optimizers.optimizers[0].load_state_dict(state_dict)
+                shit = new_optimizers.state_dict()
+                optimizers = new_optimizers
+                checkpoint.states["optimizer"] = optimizers
+                torch.distributed.barrier()
+                logger.info("Finish removing redudant optimizer state")
 
             optimizers.zero_grad()
 

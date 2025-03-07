@@ -15,10 +15,10 @@ set -ex
 # use envs as local overrides for convenience
 # e.g.
 # LOG_RANK=0,1 NGPU=4 ./run_llama_train.sh
-export CUDA_VISIBLE_DEVICES="2"
-NGPU=${NGPU:-"1"}
+export CUDA_VISIBLE_DEVICES="2,3"
+NGPU=${NGPU:-"2"}
 LOG_RANK=${LOG_RANK:-0}
-CONFIG_FILE=${CONFIG_FILE:-"./train_configs/debug_dynamic_model.toml"}
+CONFIG_FILE=${CONFIG_FILE:-"./train_configs/llama3_1.5b_dynamic_debug.toml"}
 
 overrides=""
 if [ $# -ne 0 ]; then

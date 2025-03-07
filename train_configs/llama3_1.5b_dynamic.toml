@@ -2,13 +2,13 @@
 # NOTE: this toml config is a preset for 64 A100 GPUs.
 
 [dropping]
-drop_freq = 4
-num_each = 4
+drop_freq = 1000
+num_each = 1
 sim_threshold = 0.8
 dataset = "c4_test"  # supported datasets: c4_test (2K), c4 (177M)
 batch_size = 1
-seq_len = 1024
-macro_steps = 4
+seq_len = 2048
+macro_steps = 256
 
 [job]
 dump_folder = "./outputs_llama3_3b_dynamic_half"
@@ -20,33 +20,34 @@ save_traces_folder = "profile_trace"
 profile_freq = 100
 
 [metrics]
-log_freq = 1
+log_freq = 10
 enable_tensorboard = true
 save_tb_folder = "tb"
 enable_wandb = true
 
 [model]
 name = "dynamic_llama3"
-flavor = "3B_dynamic_debug"
+flavor = "1.5B_dynamic"
 norm_type = "rmsnorm"  # layernorm / np_layernorm / rmsnorm
-tokenizer_path = "./tests/assets/test_tiktoken.model"
+tokenizer_path = "/mbz/users/haolong.jia/opt/models/llama3/tokenizer.model"
+#tokenizer_path = "./tests/assets/test_tiktoken.model"
 
 [optimizer]
 name = "AdamW"
 lr = 3e-4
 
 [training]
-batch_size = 1 # macro_batch
-seq_len = 1024
-warmup_steps = 20  # lr scheduler warmxw up
+batch_size = 4 # macro_batch
+seq_len = 4096
+warmup_steps = 2000  # lr scheduler warm up
 max_norm = 1.0  # grad norm clipping
-steps = 20
+steps = 23683
 data_parallel_replicate_degree = 1
 data_parallel_shard_degree = -1
 tensor_parallel_degree = 1
 compile = false
 dataset = "fineweb_edu"
-gradient_accumulation_steps = 1 # 4 * 32 * 4 = 512
+gradient_accumulation_steps = 4 # 4 * 32 * 4 = 512
 
 [experimental]
 context_parallel_degree = 1
@@ -56,7 +57,7 @@ pipeline_parallel_degree = 1
 enable_checkpoint = true
 folder = "checkpoint"
 interval_type = "steps"
-interval = 5
+interval = 500
 model_weights_only = false
 export_dtype = "float32"
 async_mode = "disabled" # ["disabled", "async", "async_with_pinned_mem"]

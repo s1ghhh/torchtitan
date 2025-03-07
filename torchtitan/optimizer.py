@@ -97,24 +97,79 @@ class OptimizersContainer(Optimizer):
         for optimizer in self.optimizers:
             optimizer.zero_grad()
 
+    # def state_dict(self) -> Dict[str, Any]:
+    #     func = functools.partial(
+    #         get_optimizer_state_dict,
+    #         options=StateDictOptions(flatten_optimizer_state_dict=True, ignore_frozen_params=True, strict=False),
+    #     )
+
+
+
+    #     return {
+    #         k: v
+    #         for sd in map(func, self.model_parts, self.optimizers)
+    #         for k, v in sd.items()
+    #     }
+
     def state_dict(self) -> Dict[str, Any]:
-        func = functools.partial(
-            get_optimizer_state_dict,
-            options=StateDictOptions(flatten_optimizer_state_dict=True, ignore_frozen_params=True, strict=False),
-        )
-        return {
-            k: v
-            for sd in map(func, self.model_parts, self.optimizers)
-            for k, v in sd.items()
-        }
+        """
+        Returns the state dictionary of the model's optimizers, with options applied to control
+        how the optimizer states are stored.
+        
+        - `flatten_optimizer_state_dict=True`: Flattens nested optimizer states.
+        - `ignore_frozen_params=True`: Skips parameters that are frozen.
+        - `strict=False`: Allows for some flexibility in parameter matching.
+
+        The function iterates over the model parts and their corresponding optimizers, retrieving
+        the optimizer state dictionaries and merging them into a single dictionary.
+        """
+
+        # Create a partial function that configures the state dictionary extraction
+        # func = functools.partial(
+        #     get_optimizer_state_dict,
+        #     options=StateDictOptions(
+        #         flatten_optimizer_state_dict=True,
+        #         ignore_frozen_params=True,
+        #         strict=False
+        #     ),
+        # )
+
+        # Initialize an empty dictionary to store the optimizer state
+        optimizer_state_dict = {}
+
+        # Iterate over model parts and optimizers, applying the function to extract state dicts
+        for model_part, optimizer in zip(self.model_parts, self.optimizers):
+            state_dict = get_optimizer_state_dict(model_part, optimizer, options=StateDictOptions(
+                flatten_optimizer_state_dict=True,
+                ignore_frozen_params=True,
+                strict=False
+            ),)
+            optimizer_state_dict.update(state_dict)  # Merge into final dictionary
+
+        return optimizer_state_dict
+
+    # def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    #     func = functools.partial(
+    #         set_optimizer_state_dict,
+    #         optim_state_dict=state_dict,
+    #         options=StateDictOptions(flatten_optimizer_state_dict=True, ignore_frozen_params=True, strict=False),
+    #     )
+    #     list(map(func, self.model_parts, self.optimizers))
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        func = functools.partial(
-            set_optimizer_state_dict,
-            optim_state_dict=state_dict,
-            options=StateDictOptions(flatten_optimizer_state_dict=True, ignore_frozen_params=True, strict=False),
+        options = StateDictOptions(
+            flatten_optimizer_state_dict=True,
+            ignore_frozen_params=True,
+            strict=False
         )
-        list(map(func, self.model_parts, self.optimizers))
+
+        for model_part, optimizer in zip(self.model_parts, self.optimizers):
+            set_optimizer_state_dict(
+                model_part,
+                optimizer,
+                optim_state_dict=state_dict,
+                options=options
+            )
 
     def _validate_length(self, expected_length: int) -> None:
         assert expected_length == len(
