@@ -646,8 +646,19 @@ def main(job_config: JobConfig):
                 new_optimizers = train_spec.build_optimizers_fn([model], job_config)
                 new_optimizers.optimizers[0].load_state_dict(state_dict)
                 shit = new_optimizers.state_dict()
+                del optimizers
                 optimizers = new_optimizers
-                checkpoint.states["optimizer"] = optimizers
+                # checkpoint.states["optimizer"] = optimizers
+                del checkpoint
+                checkpoint = CheckpointManager(
+                    dataloader=data_loader,
+                    model_parts=[model],
+                    optimizers=new_optimizers,
+                    lr_schedulers=lr_schedulers,
+                    states={"train_state": train_state},
+                    job_config=job_config,
+                )
+
                 torch.distributed.barrier()
                 logger.info("Finish removing redudant optimizer state")
 
