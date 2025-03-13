@@ -55,6 +55,18 @@ llama3_configs = {
         max_seq_len=4096,
         drop_list=['*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#', '*#', '#'],
     ),
+    "1.5B_dynamic_hack": DynamicTransformerModelArgs(
+        dim=1024,
+        n_layers=28,
+        n_heads=16,
+        n_kv_heads=2,
+        ffn_dim_multiplier=1.3,
+        ffn_hidden_size=4096,
+        multiple_of=1024,
+        rope_theta=200000,
+        max_seq_len=4096,
+        drop_list=['*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#', '*#'],
+    ),
     "3B_dynamic": DynamicTransformerModelArgs(
         dim=3072,
         n_layers=28,

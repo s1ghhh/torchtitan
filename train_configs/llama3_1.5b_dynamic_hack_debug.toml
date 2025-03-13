@@ -9,10 +9,10 @@ sim_threshold = 0.8
 dataset = "c4_test"  # supported datasets: c4_test (2K), c4 (177M)
 batch_size = 1
 seq_len = 2048
-macro_steps = 16
+macro_steps = 2
 
 [job]
-dump_folder = "./outputs_llama3_1.5b_dynamic_half_debug"
+dump_folder = "./outputs_llama3_1.5b_dynamic_half_hack_debug"
 description = "Llama 3 3B training"
 
 [profiling]
@@ -28,7 +28,7 @@ enable_wandb = true
 
 [model]
 name = "dynamic_llama3"
-flavor = "1.5B_dynamic"
+flavor = "1.5B_dynamic_hack"
 norm_type = "rmsnorm"  # layernorm / np_layernorm / rmsnorm
 #tokenizer_path = "/mbz/users/haolong.jia/opt/models/llama3/tokenizer.model"
 tokenizer_path = "./tests/assets/test_tiktoken.model"
@@ -39,12 +39,12 @@ lr = 3e-4
 
 [training]
 batch_size = 1 # macro_batch
-seq_len = 4096
+seq_len = 2048
 warmup_steps = 20  # lr scheduler warm up
 max_norm = 1.0  # grad norm clipping
-steps = 160
-data_parallel_replicate_degree = 2
-data_parallel_shard_degree = 1
+steps = 240
+data_parallel_replicate_degree = 1
+data_parallel_shard_degree = -1
 tensor_parallel_degree = 1
 compile = false
 dataset = "c4_test"

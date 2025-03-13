@@ -19,7 +19,7 @@ from torchtitan.train_spec import BaseModelArgs, ModelProtocol
 
 
 @dataclass
-class DroppedTransformerModelArgs(BaseModelArgs):
+class DynamicTransformerModelArgs(BaseModelArgs):
     dim: int = 4096
     n_layers: int = 32
     n_heads: int = 32
@@ -45,7 +45,7 @@ class Attention(nn.Module):
     Multi-head attention module.
 
     Args:
-        model_args (DroppedTransformerModelArgs): Model configuration arguments.
+        model_args (DynamicTransformerModelArgs): Model configuration arguments.
 
     Attributes:
         n_kv_heads (int): Number of key and value heads.
@@ -59,7 +59,7 @@ class Attention(nn.Module):
 
     """
 
-    def __init__(self, model_args: DroppedTransformerModelArgs):
+    def __init__(self, model_args: DynamicTransformerModelArgs):
         super().__init__()
         self.n_heads = model_args.n_heads
         self.n_kv_heads = (
@@ -78,6 +78,12 @@ class Attention(nn.Module):
         self.wo = nn.Linear(
             model_args.n_heads * self.head_dim, model_args.dim, bias=False
         )
+
+    def freeze(self):
+        self.wq.weight.requires_grad = False
+        self.wk.weight.requires_grad = False
+        self.wv.weight.requires_grad = False
+        self.wo.weight.requires_grad = False
 
     def init_weights(self, init_std: float):
         for linear in (self.wq, self.wk, self.wv):
@@ -273,13 +279,13 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     )
 
 
-class DroppedTransformerBlock(nn.Module):
+class DynamicTransformerBlock(nn.Module):
     """
     TransformerBlock Module
 
     Args:
         layer_id (int): Identifier for the layer.
-        model_args (DroppedTransformerModelArgs): Model configuration arguments.
+        model_args (DynamicTransformerModelArgs): Model configuration arguments.
 
     Attributes:
         n_heads (int): Number of attention heads.
@@ -293,7 +299,7 @@ class DroppedTransformerBlock(nn.Module):
 
     """
 
-    def __init__(self, layer_id: int, model_args: DroppedTransformerModelArgs):
+    def __init__(self, layer_id: int, model_args: DynamicTransformerModelArgs):
         super().__init__()
         self.n_heads = model_args.n_heads
         self.dim = model_args.dim
@@ -324,10 +330,36 @@ class DroppedTransformerBlock(nn.Module):
         else:
             self.weight_init_std = 0.02 / (2 * self.num_layers) ** 0.5
 
+    # def forward_ori(
+    #     self,
+    #     h: torch.Tensor,
+    #     freqs_cis: torch.Tensor,
+    # ):
+    #     """
+    #     Perform a forward pass through the TransformerBlock.
+
+    #     Args:
+    #         h (torch.Tensor): Input tensor.
+    #         freqs_cis (torch.Tensor): Precomputed cosine and sine frequencies.
+
+    #     Returns:
+    #         torch.Tensor: Output tensor after applying attention and feedforward layers.
+
+    #     """
+    #     if "*" in self.drop_type:
+    #         h = h + self.attention(self.attention_norm(h), freqs_cis)
+
+    #     if "#" in self.drop_type:
+    #         h = h + self.feed_forward(self.ffn_norm(h))
+        
+    #     return h
+    
+    # @torch.no_grad
     def forward(
         self,
-        h: torch.Tensor,
+        last_h: torch.Tensor,
         freqs_cis: torch.Tensor,
+        layer_sim_type: str = "",
     ):
         """
         Perform a forward pass through the TransformerBlock.
@@ -340,32 +372,94 @@ class DroppedTransformerBlock(nn.Module):
             torch.Tensor: Output tensor after applying attention and feedforward layers.
 
         """
+
+        sim_attn = torch.tensor(-1.0)
+        sim_mlp = torch.tensor(-1.0)
+
         if "*" in self.drop_type:
-            h = h + self.attention(self.attention_norm(h), freqs_cis)
+            # print(self.layer_id)
+            h_attn = last_h + self.attention(self.attention_norm(last_h), freqs_cis)
+
+            if "*" in layer_sim_type:
+                sim_attn = F.cosine_similarity(h_attn.to(torch.float32), last_h.to(torch.float32), dim=-1, eps=1e-6).mean()
+
+            # del last_h
+        else:
+            # print(f"skip {self.layer_id}")
+            # print(self.attention)
+            h_attn = last_h
 
         if "#" in self.drop_type:
-            h = h + self.feed_forward(self.ffn_norm(h))
-        
-        return h
+            h_mlp = h_attn + self.feed_forward(self.ffn_norm(h_attn))
+
+            if "#" in layer_sim_type:
+                sim_mlp = F.cosine_similarity(h_mlp.to(torch.float32), h_attn.to(torch.float32), dim=-1, eps=1e-6).mean()
+            # del h_attn
+        else:
+            h_mlp = h_attn
+
+        return h_mlp, sim_attn.item(), sim_mlp.item()
+
+    @torch.no_grad
+    def forward_for_sim(
+        self,
+        last_h: torch.Tensor,
+        freqs_cis: torch.Tensor,
+        layer_sim_type: str,
+    ):
+        """
+        Perform a forward pass through the TransformerBlock.
+
+        Args:
+            h (torch.Tensor): Input tensor.
+            freqs_cis (torch.Tensor): Precomputed cosine and sine frequencies.
+
+        Returns:
+            torch.Tensor: Output tensor after applying attention and feedforward layers.
+
+        """
+
+        sim_attn = torch.tensor(-1.0)
+        sim_mlp = torch.tensor(-1.0)
+
+        if "*" in self.drop_type:
+            h_attn = last_h + self.attention(self.attention_norm(last_h), freqs_cis)
+
+            if "*" in layer_sim_type:
+                sim_attn = F.cosine_similarity(h_attn.to(torch.float32), last_h.to(torch.float32), dim=-1, eps=1e-6).mean()
+
+            del last_h
+        else:
+            h_attn = last_h
+
+        if "#" in self.drop_type:
+            h_mlp = h_attn + self.feed_forward(self.ffn_norm(h_attn))
+
+            if "#" in layer_sim_type:
+                sim_mlp = F.cosine_similarity(h_mlp.to(torch.float32), h_attn.to(torch.float32), dim=-1, eps=1e-6).mean()
+            del h_attn
+        else:
+            h_mlp = h_attn
+
+        return h_mlp, sim_attn.item(), sim_mlp.item()
+
 
     def init_weights(self):
-        if "*" in self.drop_type:
-            for norm in (self.attention_norm, self.ffn_norm):
-                norm.reset_parameters()
-            self.attention.init_weights(self.weight_init_std)
-        if "#" in self.drop_type:
-            self.feed_forward.init_weights(self.weight_init_std)
+        for norm in (self.attention_norm, self.ffn_norm):
+            norm.reset_parameters()
+        self.attention.init_weights(self.weight_init_std)
+        self.feed_forward.init_weights(self.weight_init_std)
 
 
-class DroppedTransformer(nn.Module, ModelProtocol):
+class DynamicTransformer(nn.Module, ModelProtocol):
     """
     Transformer Module
 
     Args:
-        model_args (DroppedTransformerModelArgs): Model configuration arguments.
+        model_args (DynamicTransformerModelArgs): Model configuration arguments.
 
     Attributes:
-        model_args (DroppedTransformerModelArgs): Model configuration arguments.
+        model_args (DynamicTransformerModelArgs): Model configuration arguments.
         vocab_size (int): Vocabulary size.
         n_layers (int): Number of layers in the model.
         tok_embeddings (ParallelEmbedding): Token embeddings.
@@ -376,7 +470,7 @@ class DroppedTransformer(nn.Module, ModelProtocol):
 
     """
 
-    def __init__(self, model_args: DroppedTransformerModelArgs):
+    def __init__(self, model_args: DynamicTransformerModelArgs):
         super().__init__()
         self.model_args = model_args
         self.vocab_size = model_args.vocab_size
@@ -395,7 +489,7 @@ class DroppedTransformer(nn.Module, ModelProtocol):
 
         self.layers = torch.nn.ModuleDict()
         for layer_id in range(model_args.n_layers):
-            self.layers[str(layer_id)] = DroppedTransformerBlock(layer_id, model_args)
+            self.layers[str(layer_id)] = DynamicTransformerBlock(layer_id, model_args)
 
         self.norm = build_norm(
             model_args.norm_type, dim=model_args.dim, eps=model_args.norm_eps
@@ -450,7 +544,28 @@ class DroppedTransformer(nn.Module, ModelProtocol):
             self.model_args.rope_theta,
         )
 
-    def forward(self, tokens: torch.Tensor):
+    # def forward_ori(self, tokens: torch.Tensor):
+    #     """
+    #     Perform a forward pass through the Transformer model.
+
+    #     Args:
+    #         tokens (torch.Tensor): Input token indices.
+
+    #     Returns:
+    #         torch.Tensor: Output logits after applying the Transformer model.
+
+    #     """
+    #     # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
+    #     h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
+
+    #     for layer in self.layers.values():
+    #         h = layer(h, self.freqs_cis)
+
+    #     h = self.norm(h) if self.norm else h
+    #     output = self.output(h) if self.output else h
+    #     return output
+
+    def forward(self, tokens: torch.Tensor, layer_sim_type: str = ""):
         """
         Perform a forward pass through the Transformer model.
 
@@ -462,14 +577,52 @@ class DroppedTransformer(nn.Module, ModelProtocol):
 
         """
         # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
-        h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
 
+        sims_attn = []
+        sims_mlp = []
+
+        h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
+        # count = 0
         for layer in self.layers.values():
-            h = layer(h, self.freqs_cis)
+            # count+=1
+            # # h, sim_attn, sim_mlp = layer.forward_for_sim(h, self.freqs_cis, layer_sim_type)
+            # if count > 7:
+            #     print(count)
+            #     print(type(layer))
+            #     print(layer.drop_type)
+            h, sim_attn, sim_mlp = layer(h, self.freqs_cis, layer_sim_type)
+            sims_attn.append(sim_attn)
+            sims_mlp.append(sim_mlp)
 
         h = self.norm(h) if self.norm else h
         output = self.output(h) if self.output else h
-        return output
+        return output, sims_attn, sims_mlp
+
+    @torch.no_grad
+    def forward_for_sim_layer(self, tokens: torch.Tensor, layer_sim_type: str):
+        """
+        Perform a forward pass through the Transformer model.
+
+        Args:
+            tokens (torch.Tensor): Input token indices.
+
+        Returns:
+            torch.Tensor: Output logits after applying the Transformer model.
+
+        """
+        # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
+        sims_attn = []
+        sims_mlp = []
+        h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
+        
+        for layer in self.layers.values():
+            h, sim_attn, sim_mlp = layer.forward_for_sim(h, self.freqs_cis, layer_sim_type)
+            sims_attn.append(sim_attn)
+            sims_mlp.append(sim_mlp)
+        
+        # h = self.norm(h) if self.norm else h
+        # output = self.output(h) if self.output else h
+        return sims_attn, sims_mlp
 
     @torch.no_grad
     def drop_layer(self, dropped_attn_list: list, dropped_mlp_list: list, device):
@@ -529,82 +682,128 @@ class DroppedTransformer(nn.Module, ModelProtocol):
         # )
         # )
 
-        # for layer_id in range(len(self.layers.values())):
-        #     if layer_id in dropped_attn_list:
-        #         try:
-        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.attention.freeze()
-        #             # model.layers["7"]._checkpoint_wrapped_module.attention.wq.weight
-        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.attention_norm.weight.requires_grad = False
-        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.drop_type = self.layers[str(layer_id)].drop_type.replace("*", "")
-        #         except:
-        #             self.layers[str(layer_id)].attention.freeze()
-        #             self.layers[str(layer_id)].attention_norm.weight.requires_grad = False
-        #             self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("*", "")
-
-        #     if layer_id in dropped_mlp_list:
-        #         try:
-        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.feed_forward.freeze()
-        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.ffn_norm.weight.requires_grad = False
-        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
-        #         except:
-        #             self.layers[str(layer_id)].feed_forward.freeze()
-        #             self.layers[str(layer_id)].ffn_norm.weight.requires_grad = False
-        #             self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
-
-
         for layer_id in range(len(self.layers.values())):
             if layer_id in dropped_attn_list:
                 try:
-                    self.layers[str(layer_id)]._checkpoint_wrapped_module.attention = nn.Identity().to(device)
-                    self.layers[str(layer_id)]._checkpoint_wrapped_module.attention_norm = nn.Identity().to(device)
+                    self.layers[str(layer_id)]._checkpoint_wrapped_module.attention.freeze()
+                    # model.layers["7"]._checkpoint_wrapped_module.attention.wq.weight
+                    self.layers[str(layer_id)]._checkpoint_wrapped_module.attention_norm.weight.requires_grad = False
                     self.layers[str(layer_id)]._checkpoint_wrapped_module.drop_type = self.layers[str(layer_id)].drop_type.replace("*", "")
                 except:
-                    self.layers[str(layer_id)].attention = nn.Identity().to(device)
-                    self.layers[str(layer_id)].attention_norm = nn.Identity().to(device)
+                    self.layers[str(layer_id)].attention.freeze()
+                    self.layers[str(layer_id)].attention_norm.weight.requires_grad = False
                     self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("*", "")
 
             if layer_id in dropped_mlp_list:
                 try:
-                    self.layers[str(layer_id)]._checkpoint_wrapped_module.feed_forward = nn.Identity().to(device)
-                    self.layers[str(layer_id)]._checkpoint_wrapped_module.ffn_norm = nn.Identity().to(device)
+                    self.layers[str(layer_id)]._checkpoint_wrapped_module.feed_forward.freeze()
+                    self.layers[str(layer_id)]._checkpoint_wrapped_module.ffn_norm.weight.requires_grad = False
                     self.layers[str(layer_id)]._checkpoint_wrapped_module.drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
                 except:
-                    self.layers[str(layer_id)].feed_forward = nn.Identity().to(device)
-                    self.layers[str(layer_id)].ffn_norm = nn.Identity().to(device)
+                    self.layers[str(layer_id)].feed_forward.freeze()
+                    self.layers[str(layer_id)].ffn_norm.weight.requires_grad = False
                     self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
+
 
         # for layer_id in range(len(self.layers.values())):
         #     if layer_id in dropped_attn_list:
         #         try:
-        #             del self.layers[str(layer_id)]._checkpoint_wrapped_module.attention
-        #             del self.layers[str(layer_id)]._checkpoint_wrapped_module.attention_norm
-        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.attention = None
-        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.attention_norm = None
+        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.attention = nn.Identity().to(device)
+        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.attention_norm = nn.Identity().to(device)
         #             self.layers[str(layer_id)]._checkpoint_wrapped_module.drop_type = self.layers[str(layer_id)].drop_type.replace("*", "")
         #         except:
-        #             del self.layers[str(layer_id)].attention
-        #             del self.layers[str(layer_id)].attention_norm
-        #             self.layers[str(layer_id)].attention = None
-        #             self.layers[str(layer_id)].attention_norm = None
+        #             self.layers[str(layer_id)].attention = nn.Identity().to(device)
+        #             self.layers[str(layer_id)].attention_norm = nn.Identity().to(device)
         #             self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("*", "")
+
         #     if layer_id in dropped_mlp_list:
         #         try:
-        #             del self.layers[str(layer_id)]._checkpoint_wrapped_module.feed_forward
-        #             del self.layers[str(layer_id)]._checkpoint_wrapped_module.ffn_norm
-        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.feed_forward = None
-        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.ffn_norm = None
+        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.feed_forward = nn.Identity().to(device)
+        #             self.layers[str(layer_id)]._checkpoint_wrapped_module.ffn_norm = nn.Identity().to(device)
         #             self.layers[str(layer_id)]._checkpoint_wrapped_module.drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
         #         except:
-        #             del self.layers[str(layer_id)].feed_forward
-        #             del self.layers[str(layer_id)].ffn_norm
-        #             self.layers[str(layer_id)].feed_forward = None
-        #             self.layers[str(layer_id)].ffn_norm = None
+        #             self.layers[str(layer_id)].feed_forward = nn.Identity().to(device)
+        #             self.layers[str(layer_id)].ffn_norm = nn.Identity().to(device)
         #             self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
+        # with torch.no_grad():
 
+        #     for layer_id in range(len(self.layers.values())):
+        #         if layer_id in dropped_attn_list:
+        #             try:
+        #                 del self.layers[str(layer_id)]._checkpoint_wrapped_module.attention.wq.weight
+        #                 del self.layers[str(layer_id)]._checkpoint_wrapped_module.attention.wk.weight
+        #                 del self.layers[str(layer_id)]._checkpoint_wrapped_module.attention.wv.weight
+        #                 del self.layers[str(layer_id)]._checkpoint_wrapped_module.attention.wo.weight
+
+        #                 del self.layers[str(layer_id)]._checkpoint_wrapped_module.attention_norm.weight
+        #                 del self.layers[str(layer_id)]._checkpoint_wrapped_module.attention
+        #                 del self.layers[str(layer_id)]._checkpoint_wrapped_module.attention_norm
+        #                 self.layers[str(layer_id)]._checkpoint_wrapped_module.attention = None
+        #                 self.layers[str(layer_id)]._checkpoint_wrapped_module.attention_norm = None
+        #                 self.layers[str(layer_id)]._checkpoint_wrapped_module.drop_type = self.layers[str(layer_id)].drop_type.replace("*", "")
+        #                 # print(f"self.layers_branch1 {self.layers.attention}")
+        #             except:
+        #                 del self.layers[str(layer_id)].attention.wq.weight
+        #                 del self.layers[str(layer_id)].attention.wk.weight
+        #                 del self.layers[str(layer_id)].attention.wv.weight
+        #                 del self.layers[str(layer_id)].attention.wo.weight
+
+        #                 del self.layers[str(layer_id)].attention_norm.weight
+        #                 del self.layers[str(layer_id)].attention
+        #                 del self.layers[str(layer_id)].attention_norm
+        #                 self.layers[str(layer_id)].attention = None
+        #                 self.layers[str(layer_id)].attention_norm = None
+        #                 self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("*", "")
+        #                 # print(f"self.layers_branch2 {self.layers.attention}")
+        #         if layer_id in dropped_mlp_list:
+        #             try:
+        #                 del self.layers[str(layer_id)]._checkpoint_wrapped_module.feed_forward.weight
+        #                 del self.layers[str(layer_id)]._checkpoint_wrapped_module.ffn_norm.weight
+        #                 del self.layers[str(layer_id)]._checkpoint_wrapped_module.feed_forward
+        #                 del self.layers[str(layer_id)]._checkpoint_wrapped_module.ffn_norm
+        #                 self.layers[str(layer_id)]._checkpoint_wrapped_module.feed_forward = None
+        #                 self.layers[str(layer_id)]._checkpoint_wrapped_module.ffn_norm = None
+        #                 self.layers[str(layer_id)]._checkpoint_wrapped_module.drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
+        #             except:
+        #                 del self.layers[str(layer_id)].feed_forward.weight
+        #                 del self.layers[str(layer_id)].ffn_norm.weight
+        #                 del self.layers[str(layer_id)].feed_forward
+        #                 del self.layers[str(layer_id)].ffn_norm
+        #                 self.layers[str(layer_id)].feed_forward = None
+        #                 self.layers[str(layer_id)].ffn_norm = None
+        #                 self.layers[str(layer_id)].drop_type = self.layers[str(layer_id)].drop_type.replace("#", "")
+
+
+    @torch.no_grad
+    def forward_for_sim_block(self, tokens: torch.Tensor):
+        """
+        Perform a forward pass through the Transformer model.
+
+        Args:
+            tokens (torch.Tensor): Input token indices.
+
+        Returns:
+            torch.Tensor: Output logits after applying the Transformer model.
+
+        """
+        # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
+        sims = []
+        last_h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
+        
+        for layer in self.layers.values():
+            h = layer(last_h, self.freqs_cis)
+            cos_sim = F.cosine_similarity(h, last_h, dim=-1)
+            sims.append(cos_sim.mean())
+            last_h = h
+
+        
+        h = self.norm(h) if self.norm else h
+        # output = self.output(h) if self.output else h
+        return sims
 
 
     @classmethod
-    def from_model_args(cls, model_args: DroppedTransformerModelArgs) -> "Transformer":
+    def from_model_args(cls, model_args: DynamicTransformerModelArgs) -> "Transformer":
         """
         Initialize a Transformer model from a DroppedTransformerModelArgs object.
 

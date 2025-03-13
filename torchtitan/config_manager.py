@@ -71,6 +71,13 @@ class JobConfig:
         )
 
         self.parser.add_argument(
+            "--dropping.num_max",
+            type=int,
+            default=0,
+            help="",
+        )
+
+        self.parser.add_argument(
             "--dropping.total_num",
             type=int,
             default=14,
