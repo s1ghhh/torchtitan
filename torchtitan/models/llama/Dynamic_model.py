@@ -373,9 +373,9 @@ class DynamicTransformerBlock(nn.Module):
             torch.Tensor: Output tensor after applying attention and feedforward layers.
 
         """
-
-        sim_attn = torch.tensor(-1.0)
-        sim_mlp = torch.tensor(-1.0)
+        if layer_sim_type != "":
+            sim_attn = torch.tensor(-1.0)
+            sim_mlp = torch.tensor(-1.0)
 
         if "*" in self.drop_type:
             # print(self.layer_id)
@@ -399,7 +399,11 @@ class DynamicTransformerBlock(nn.Module):
         else:
             h_mlp = h_attn
 
-        return h_mlp, sim_attn.item(), sim_mlp.item()
+        if layer_sim_type == "":
+            return h_mlp, None, None
+        else:
+            return h_mlp, sim_attn.item(), sim_mlp.item()
+        
 
     @torch.no_grad
     def forward_for_sim(
@@ -582,8 +586,9 @@ class DynamicTransformer(nn.Module, ModelProtocol):
         """
         # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
 
-        sims_attn = []
-        sims_mlp = []
+        if layer_sim_type != "":
+            sims_attn = []
+            sims_mlp = []
 
         h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
         # count = 0
@@ -595,12 +600,17 @@ class DynamicTransformer(nn.Module, ModelProtocol):
             #     print(type(layer))
             #     print(layer.drop_type)
             h, sim_attn, sim_mlp = layer(h, self.freqs_cis, layer_sim_type)
-            sims_attn.append(sim_attn)
-            sims_mlp.append(sim_mlp)
+            if layer_sim_type != "":
+                sims_attn.append(sim_attn)
+                sims_mlp.append(sim_mlp)
 
         h = self.norm(h) if self.norm else h
         output = self.output(h) if self.output else h
-        return output, sims_attn, sims_mlp
+
+        if layer_sim_type == "":
+            return output, [], []
+        else:
+            return output, sims_attn, sims_mlp
 
     @torch.no_grad
     def forward_for_sim_layer(self, tokens: torch.Tensor, layer_sim_type: str):
