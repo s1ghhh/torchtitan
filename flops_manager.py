@@ -208,9 +208,9 @@ def main():
         drop_list = ['*#' for _ in range(num_layers - i)]
         for _ in range(i):
             drop_list.append('#')
-        # drop_list = ['*#' for _ in range(num_layers//2)]
-        # for _ in range(num_layers//2):
-        #     drop_list.append('#')
+        drop_list = ['*#' for _ in range(num_layers//2)]
+        for _ in range(num_layers//2):
+            drop_list.append('#')
         print(len(drop_list))
         print(drop_list)
         current_transformer = DynamicTransformer(num_layers, seq_len, vocab_size, model_dim, hidden_dim, num_heads, swiglu, num_experts, topk, drop_list)

@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --partition=main
 #SBATCH --job-name=eval
-#SBATCH --nodes=2
-#SBATCH --ntasks=2
+#SBATCH --nodes=4
+#SBATCH --ntasks=4
 #SBATCH --gpus-per-task=8
 #SBATCH --cpus-per-task=80        # cpu-cores per task (>1 if multi-threaded tasks)
 #SBATCH --mem=0                 # total memory per node (4 GB per cpu-core is default)
@@ -18,7 +18,7 @@ cd /mnt/weka/home/haolong.jia/opt/torchtitan
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export OMP_NUM_THREADS=1
 
-NNODES=2
+NNODES=4
 GPUS_PER_NODE=8
 LOG_RANK=${LOG_RANK:-0}
 
@@ -42,7 +42,7 @@ DISTRIBUTED_ARGS=(
 set -ex
 
 # CONFIG_FILE=${CONFIG_FILE:-"./train_configs/debug_model.toml"}
-CONFIG_FILE="/mnt/weka/home/haolong.jia/opt/torchtitan/train_configs/llama3_3b.toml"
+CONFIG_FILE="/mnt/weka/home/haolong.jia/opt/torchtitan/train_configs/llama3_1.5b.toml"
 
 overrides=""
 if [ $# -ne 0 ]; then

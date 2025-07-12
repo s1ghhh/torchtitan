@@ -42,7 +42,7 @@ DISTRIBUTED_ARGS=(
 set -ex
 
 # CONFIG_FILE=${CONFIG_FILE:-"./train_configs/debug_model.toml"}
-CONFIG_FILE="/mnt/weka/home/haolong.jia/opt/torchtitan/train_configs/llama3_3b.toml"
+CONFIG_FILE="/mnt/weka/home/haolong.jia/opt/torchtitan/train_configs/llama3_1.5b_dropped.toml"
 
 overrides=""
 if [ $# -ne 0 ]; then

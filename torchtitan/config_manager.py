@@ -506,7 +506,7 @@ class JobConfig:
         self.parser.add_argument(
             "--training.seed",
             type=int,
-            default=None,
+            default=42,
             help="Choose the base RNG seed used for training",
         )
         self.parser.add_argument(

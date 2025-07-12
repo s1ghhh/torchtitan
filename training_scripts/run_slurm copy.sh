@@ -1,20 +1,19 @@
 #!/bin/bash
-#SBATCH --partition=main
-#SBATCH --job-name=eval
+#SBATCH --partition=mbzuai
+#SBATCH --job-name=training
 #SBATCH --nodes=2
 #SBATCH --ntasks=2
 #SBATCH --gpus-per-task=8
 #SBATCH --cpus-per-task=80        # cpu-cores per task (>1 if multi-threaded tasks)
 #SBATCH --mem=0                 # total memory per node (4 GB per cpu-core is default)
 #SBATCH --gres=gpu:8             # number of gpus per node
-#SBATCH --output=/mnt/weka/home/haolong.jia/opt/logs/slurm_%x_%j.out
-#SBATCH --error=/mnt/weka/home/haolong.jia/opt/logs/slurm_%x_%j.err
+#SBATCH --output=/mbz/users/haolong.jia/opt/logs/slurm_%x_%j.out
+#SBATCH --error=/mbz/users/haolong.jia/opt/logs/slurm_%x_%j.err
 
-# module load cuda/12.4
-conda init
+module load cuda/12.4
 source activate 
 conda activate torchtitan
-cd /mnt/weka/home/haolong.jia/opt/torchtitan
+cd /mbz/users/haolong.jia/opt/torchtitan
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export OMP_NUM_THREADS=1
 
@@ -42,7 +41,7 @@ DISTRIBUTED_ARGS=(
 set -ex
 
 # CONFIG_FILE=${CONFIG_FILE:-"./train_configs/debug_model.toml"}
-CONFIG_FILE="/mnt/weka/home/haolong.jia/opt/torchtitan/train_configs/llama3_3b.toml"
+CONFIG_FILE="/mbz/users/haolong.jia/opt/torchtitan/train_configs/llama3_3b.toml"
 
 overrides=""
 if [ $# -ne 0 ]; then
